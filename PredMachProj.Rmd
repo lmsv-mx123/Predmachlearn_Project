@@ -1,0 +1,128 @@
+---
+title: "Practical Machine Learning Prediction Project"
+author: "Luis Salazar"
+output:
+  html_document:
+    keep_md: true
+---
+
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants (The training data for this project is available  [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and the tests data [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv), thanks to this [source](http://groupware.les.inf.puc-rio.br/har) ). The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+## Pre-Initialization
+Before going through the calculations and processing of the data, load required libraries, change the current working directory to match where the root folder containing the data sets and R markdown files ("Predmachlearn_Project"). Code chunks will be echoed, specifying the global flag echo=TRUE. 
+
+```{r, echo=TRUE, warning=FALSE}
+library(caret)
+library(e1071)
+library(data.table)
+library(knitr)
+library(markdown)
+setwd("~/Predmachlearn_Project/")
+opts_chunk$set(echo=TRUE)
+```
+
+Should any of the libraries be missing, please issue:
+```{r, eval=FALSE}
+install.packages("caret")
+install.packages("e1071")
+install.packages("data.table")
+install.packages("knitr")
+install.packages("markdown")
+```
+
+The report was Knited from the RStudio editor, but can also be knited with:
+```{r, eval=FALSE}
+knit("PredMachProj.Rmd") ## generates md file
+markdownToHTML("PredMachProj.md", "PredMachProj.html") ## generates the html from md file 
+```
+## Loading and preprocessing the data
+The csv files for training and testing are read and loaded into their respective variables.
+
+```{r}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+names(training)
+```
+
+## Cleaning data
+To have a cleaner data set for the machine learning, the following was done: remove NA, non-numeric variables, and near zero values.
+
+```{r}
+training <- training[, which(as.numeric(colSums(is.na(training)))==0)]
+testing <- testing[, which(as.numeric(colSums(is.na(testing)))==0)]
+training <- training[,-(1:7)] ##user_name, timestamps, windows
+testing <- testing[,-(1:7)] ##user_name, timestamps, windows
+training <- training[, nearZeroVar(training, saveMetrics = TRUE)$nzv==FALSE]
+testing <-testing[, nearZeroVar(testing, saveMetrics = TRUE)$nzv==FALSE]
+training$classe <- factor(training$classe)
+
+plot(training$classe, main="Bar Plot of the variable classe with the training data set",
+     xlab="Classe levels", ylab="Frequency")
+```
+
+## The prediction
+The variable of interest is classe, a factor variable from classe A to classe E, from which classe A is when the participants performed Unilateral Dumbbell Biceps Curl exactly as specified, whilst the other classes represent a common mistake when participants did the exercise. Data has been cleaned to aid in building a better model. Moreover, a seed of 123 has been used on the pseudo-random number generator used afterwards as reproduceability is important.
+
+### Splitting the training data
+In order to apply the model to the testing data, the model has first to be tested using well known training data. This data is chosen to be split on 70% for training data and 30% for testing data.
+```{r}
+train_idx <- createDataPartition(y = training$classe, p=0.7,list=FALSE);
+sub_training <- training[train_idx,];
+sub_testing <- training[-train_idx,];
+```
+
+### Machine learning models
+
+```{r, cache=TRUE, eval=FALSE}
+#seed
+set.seed(123)
+#two models generated:  random forest ["rf"] and boosted trees ["gbm"]
+model_rf <- train(classe ~ ., method = "rf", data = sub_training)    
+model_gbm <-train(classe ~ ., method = 'gbm', data = sub_training)
+```
+
+### Expected out of sample error
+
+The expected out of sample error will be 1 minus the accuracy in the cross validation data, set partitioned of 70% for training and 30% for testing. For the final testing data set, the expected out of sample error is to be about 1%.
+
+```{r, eval=FALSE}
+print("Random forest accuracy")
+rf_accuracy<- predict(model_rf, sub_testing)
+print(confusionMatrix(rf_accuracy, sub_testing$classe))
+print("Boosted trees accuracy")
+gbm_accuracy<- predict(model_gbm , sub_testing)
+print(confusionMatrix(gbm_accuracy, sub_testing$classe))
+```
+
+From which the accuracy of those models is 99% for the random forest and 96% for the boosted trees. The chosen model is then random forest.
+
+### Cross-validation
+In order to avoid over-fitting in the random forest model, the model is tuned a bit by chosing the number of folds and sets to compute (both 10). 
+
+```{r, eval=FALSE}
+#seed
+set.seed(123)
+control <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+model_rf_cont <- train(classe ~ ., method="rf",  data = sub_training, trControl = control)
+print("Random forest accuracy after CV")
+rf_accuracy_cv <- predict(model_rf_cont , sub_testing)
+print(confusionMatrix(rf_accuracy_cv, sub_testing$classe))
+```
+
+The accuracy is similar to the one obtained earlier on.
+
+### Order of importance of variables for the model
+Running the code shown below, the listing of the variable importance can be seen, from which the most important variable in the model of random forest is roll_belt.
+
+```{r, eval=FALSE}
+print("Variables importance")
+imp = varImp(rf_accuracy_cv$finalModel)
+imp$var<-rownames(imp)
+imp = as.data.frame(imp[with(imp, order(imp$Overall, decreasing=TRUE)), ])
+rownames(imp) <- NULL
+print(imp)
+```
+
+### Test cases
+With the random forest model tuned with cross validation the 20 test cases are predicted and submitted.
